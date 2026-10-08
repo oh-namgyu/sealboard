@@ -1,0 +1,14 @@
+# docker compose up -d
+# then open the one-time setup link printed in:  docker compose logs sealboard
+services:
+  sealboard:
+    build: .
+    image: sealboard:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"   # localhost only — put a TLS reverse proxy in front for other devices (README)
+    volumes:
+      - sealboard-data:/data     # named volume: owned by the image's non-root user on every platform
+
+volumes:
+  sealboard-data:

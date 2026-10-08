@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sealboard"
+dynamic = ["version"]
+description = "Self-hosted sticky-note board whose notes and images are encrypted and decrypted only in your browser."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "oh-namgyu" }]
+keywords = ["notes", "sticky-notes", "end-to-end-encryption", "webcrypto", "self-hosted", "zero-knowledge"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Framework :: Flask",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Office/Business",
+]
+dependencies = ["flask>=2.3", "waitress>=3.0.1"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+e2e = ["pytest>=7", "playwright>=1.45"]
+
+[project.scripts]
+sealboard = "sealboard.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/oh-namgyu/sealboard"
+Issues = "https://github.com/oh-namgyu/sealboard/issues"
+
+[tool.setuptools]
+packages = ["sealboard"]
+
+[tool.setuptools.dynamic]
+version = { attr = "sealboard.__version__" }
+
+[tool.setuptools.package-data]
+sealboard = ["static/*.html", "static/*.css", "static/*.svg", "static/js/*.js", "static/vendor/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["e2e: browser end-to-end tests (need playwright + chromium)"]

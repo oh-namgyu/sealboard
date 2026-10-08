@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>sealboard</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/vendor/purify.min.js"></script>
+<script type="module" src="/static/js/main.js"></script>
+</head>
+<body>
+<nav class="sb-nav">
+  <div class="sb-nav-title"><b>🔏 sealboard</b><span>notes are decrypted only in this browser</span></div>
+  <div class="sb-nav-actions">
+    <span class="sb-save-state hidden" id="saveState" role="status" aria-live="polite">Saved</span>
+    <input class="sb-search hidden" id="q" type="search" placeholder="Search notes (Enter = next)" autocomplete="off" aria-label="Search notes">
+    <button class="sb-btn hidden" id="newNote" type="button" title="New note (or double-click the board)" aria-label="New note">+<span class="sb-btn-label">Note</span></button>
+    <button class="sb-btn hidden" id="keyBtn" type="button" title="Passphrase and auto-lock" aria-label="Passphrase and auto-lock">🔑<span class="sb-btn-label">Settings</span></button>
+    <button class="sb-btn hidden" id="lockBtn" type="button" title="Lock now" aria-label="Lock now">🔒<span class="sb-btn-label">Lock</span></button>
+  </div>
+</nav>
+<main class="sb-shell">
+  <section class="sb-lock" id="lock">
+    <form class="sb-dialog sb-lock-card" id="lockForm" autocomplete="on">
+      <h2 id="lockTitle">Loading…</h2>
+      <p class="sb-lock-hint" id="lockHint"></p>
+      <input class="hidden" type="text" name="username" value="sealboard" autocomplete="username" aria-hidden="true" tabindex="-1">
+      <input id="setupCode" class="hidden" type="text" placeholder="Setup code (printed by the server)" aria-label="Setup code" autocomplete="off" spellcheck="false">
+      <input id="pass" type="password" placeholder="Passphrase" aria-label="Passphrase" required>
+      <input id="pass2" class="hidden" type="password" autocomplete="new-password" placeholder="Repeat passphrase" aria-label="Repeat passphrase">
+      <p class="sb-error" id="lockErr" role="alert"></p>
+      <button class="sb-btn sb-btn-primary" type="submit" id="lockSubmit">Unlock</button>
+    </form>
+  </section>
+  <section class="sb-workspace hidden" id="workspace">
+    <div class="sb-tabs" id="tabs" role="tablist" aria-label="Tabs"></div>
+    <div class="sb-board" id="board">
+      <div class="sb-canvas" id="canvas"></div>
+      <p class="sb-empty hidden" id="empty">No notes in this tab yet — click [+ Note] or double-click anywhere</p>
+    </div>
+  </section>
+</main>
+
+<dialog id="keyDlg" class="sb-dialog"><h3>🔑 Passphrase &amp; auto-lock</h3>
+  <label for="idleMin">Lock after inactivity</label>
+  <select id="idleMin"><option value="5">5 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">1 hour</option><option value="0">Never</option></select>
+  <label for="oldPass">Change passphrase — current passphrase (leave empty to keep it)</label><input id="oldPass" type="password" autocomplete="current-password">
+  <label for="newPass">New passphrase (10+ characters)</label><input id="newPass" type="password" autocomplete="new-password">
+  <label for="newPass2">Repeat new passphrase</label><input id="newPass2" type="password" autocomplete="new-password">
+  <p class="sb-error" id="keyErr" role="alert"></p>
+  <div class="sb-dialog-row"><button class="sb-btn" type="button" id="keyCancel">Cancel</button><button class="sb-btn sb-btn-primary" type="button" id="keySave">Save</button></div>
+</dialog>
+<dialog class="sb-lightbox" id="lightbox" aria-label="Image preview"><img alt=""></dialog>
+<div class="sb-toast hidden" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: pip install -e '.[test]'
+      - name: API and CLI tests
+        run: python -m pytest -m "not e2e" -q
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e '.[e2e]'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+      - name: Browser
+        run: python -m playwright install --with-deps chromium
+      - name: Browser end-to-end tests
+        run: python -m pytest -m e2e -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t sealboard:ci .
+      - name: Smoke test (named volume, non-root, healthcheck, setup code from logs)
+        run: |
+          docker run -d --name sb -p 127.0.0.1:8080:8080 -v sbdata:/data sealboard:ci
+          curl -sf --retry 30 --retry-delay 1 --retry-all-errors http://127.0.0.1:8080/api/vault
+          code=$(docker logs sb 2>&1 | grep -o 'setup=[A-Za-z0-9_-]*' | head -1 | cut -d= -f2)
+          key=$(python3 -c "import base64; print(base64.b64encode(b'k' * 32).decode())")
+          body=$(SB_CODE="$code" SB_KEY="$key" python3 -c "import base64, json, os; b = lambda x: base64.b64encode(x).decode(); print(json.dumps({'kdf': 'PBKDF2-SHA256', 'iter': 600000, 'salt': b(b's' * 16), 'wrapped': {'iv': b(bytes(12)), 'ct': b(b'ct')}, 'authKey': os.environ['SB_KEY'], 'setupCode': os.environ['SB_CODE']}))")
+          curl -sf -X POST -H 'Content-Type: application/json' -d "$body" http://127.0.0.1:8080/api/vault
+          curl -sf -H "Authorization: Bearer $key" http://127.0.0.1:8080/api/board > /dev/null
+          test "$(docker inspect --format '{{.Config.User}}' sb)" = "sealboard"
+          for i in $(seq 1 20); do
+            [ "$(docker inspect --format '{{.State.Health.Status}}' sb)" = "healthy" ] && exit 0; sleep 3
+          done
+          docker inspect --format '{{json .State.Health}}' sb; exit 1
