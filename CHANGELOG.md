@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-10-08
+
+### Fixed
+- Start-up messages, including the one-time setup link, were held back when output is not a terminal
+  (systemd, `nohup`, redirected logs), so a first-time setup could not be completed there.
+
 ## [0.1.0] - 2026-10-08
 
 ### Added
@@ -18,4 +24,5 @@ All notable changes to this project are documented here. The format follows
 - Optimistic concurrency: edits from two windows never overwrite each other silently.
 - Strict Content-Security-Policy, rate-limited logins, Docker image running as non-root.
 
+[0.1.1]: https://github.com/oh-namgyu/sealboard/releases/tag/v0.1.1
 [0.1.0]: https://github.com/oh-namgyu/sealboard/releases/tag/v0.1.0

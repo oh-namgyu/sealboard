@@ -70,6 +70,8 @@ def _run_client(args: argparse.Namespace) -> int:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(line_buffering=True)   # show the setup link at once under systemd/nohup/log files
     args = _parser().parse_args(argv)
     if args.remote:
         return _run_client(args)
