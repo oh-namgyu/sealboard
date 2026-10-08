@@ -166,7 +166,7 @@ def test_tabs_and_search(server, page):
 
 
 def test_reload_unlock_lock_and_passphrase_change(server, page):
-    url, _ = server
+    url, data = server
     page.goto(url)
     page.wait_for_selector('#lockTitle:has-text("Unlock")')
     unlock(page, 'not the passphrase')
@@ -185,16 +185,33 @@ def test_reload_unlock_lock_and_passphrase_change(server, page):
     assert 'alpha' not in page.content() and page.locator('.sb-note').count() == 0
     unlock(page, P1)
     page.wait_for_selector('#workspace:not(.hidden)')
+    before = json.loads(board_file(data))
     page.click('#keyBtn')
-    page.fill('#oldPass', P1)
+    page.fill('#oldPass', 'not the passphrase')
     page.fill('#newPass', P2)
     page.fill('#newPass2', P2)
     page.click('#keySave')
+    expect(page.locator('#keyErr')).to_contain_text('Current passphrase is wrong')
+    assert json.loads(board_file(data)) == before                         # a wrong passphrase changes nothing
+    page.fill('#oldPass', P1)
+    page.click('#keySave')
     page.wait_for_selector('#keyDlg', state='hidden')
+    image_ready(page)                                                     # same page keeps working on the new key
+    after = json.loads(board_file(data))
+    old_note = next(n for n in before['notes'] if n['blobs'])
+    new_note = next(n for n in after['notes'] if n['id'] == old_note['id'])
+    assert new_note['ct'] != old_note['ct'] and new_note['blobs'] != old_note['blobs']
+    assert after['vault']['wrapped'] != before['vault']['wrapped'] and after['vault']['salt'] != before['vault']['salt']
+    assert not os.path.exists(os.path.join(data, 'blobs', old_note['blobs'][0] + '.bin'))   # old-key image gone
     page.goto(url)
     page.wait_for_selector('#lockTitle:has-text("Unlock")')
+    unlock(page, P1)
+    expect(page.locator('#lockErr')).to_contain_text('Wrong passphrase', timeout=15000)
     unlock(page, P2)
     expect(page.locator('.sb-tab')).to_have_count(2)
+    page.click('.sb-tab:has-text("Notes")')
+    image_ready(page)
+    assert 'alpha' in page.inner_html('.sb-rich')
 
 
 def test_api_refuses_without_key_and_page_logs_no_errors(server, page):

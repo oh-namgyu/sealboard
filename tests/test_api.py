@@ -1,9 +1,10 @@
 """Board API: only ciphertext and layout reach disk, revisions prevent silent overwrites, images are cleaned up."""
+import base64
 import json
 import os
 
 import pytest
-from conftest import CT, IV, bearer, read_board
+from conftest import CT, IV, bearer, read_board, vault_body
 
 from sealboard import store as st
 
@@ -110,3 +111,36 @@ def test_failed_mutation_leaves_no_half_applied_state(api, store):
     _note(api)
     assert api('post', '/api/tabs/order', {'ids': ['t_nonexisten']}).status_code == 409
     assert _note(api, base=1).get_json()['rev'] == 2   # cache dropped and re-read cleanly after the refusal
+
+
+def _rotation(api, notes, tabs, key='bmV3a2V5bmV3a2V5bmV3a2V5bmV3a2V5bmV3a2V5bmU='):
+    return api('post', '/api/vault/rotate', {'vault': vault_body(ct='cm90YXRlZA=='), 'authKey': key,
+                                             'tabs': tabs, 'notes': notes})
+
+
+def test_rotation_swaps_every_item_and_deletes_old_images_at_once(api, store):
+    _tab(api)
+    api('put', f'/api/blobs/{BLOB}', data=os.urandom(64))
+    _note(api, blobs=[BLOB])
+    fresh = 'b_freshfresh'
+    api('put', f'/api/blobs/{fresh}', data=os.urandom(64))
+    new_ct = base64.b64encode(b'new ciphertext').decode()
+    tabs = [{'id': TAB, 'iv': IV, 'ct': new_ct, 'baseRev': 1}]
+    notes = [{'id': NOTE, 'iv': IV, 'ct': new_ct, 'baseRev': 1, 'blobs': [fresh]}]
+    assert _rotation(api, notes, tabs).status_code == 200
+    board = json.loads(read_board(store))
+    assert board['notes'][0]['ct'] == new_ct and board['notes'][0]['rev'] == 2 and board['tabs'][0]['ct'] == new_ct
+    assert not os.path.exists(store.blob_path(BLOB)) and os.path.exists(store.blob_path(fresh))
+
+
+def test_rotation_is_all_or_nothing(api, store):
+    _tab(api)
+    _note(api)
+    before = read_board(store)
+    tabs = [{'id': TAB, 'iv': IV, 'ct': CT, 'baseRev': 1}]
+    assert _rotation(api, [], tabs).status_code == 409                         # a note is missing
+    stale = [{'id': NOTE, 'iv': IV, 'ct': CT, 'baseRev': 0, 'blobs': []}]
+    assert _rotation(api, stale, tabs).status_code == 409                      # note moved on meanwhile
+    assert read_board(store) == before
+    assert api('get', '/api/board').status_code == 200                         # still the old key
+

@@ -51,11 +51,13 @@ def test_board_needs_the_right_bearer_key(owner, store):
     assert AUTH_KEY not in raw and '"authHash"' in raw
 
 
-def test_passphrase_change_rotates_the_auth_key(owner):
+def test_key_rotation_replaces_the_auth_key_and_the_old_endpoint_is_gone(owner):
     new_key = b64key(b'n')
-    body = {'vault': dict(vault_body(ct='bmV3d3JhcA==')), 'authKey': new_key}
-    assert owner.put('/api/vault', json=body, headers=bearer()).status_code == 200
-    assert owner.get('/api/board', headers=bearer()).status_code == 401      # old key is dead
+    body = {'vault': vault_body(ct='bmV3d3JhcA=='), 'authKey': new_key, 'tabs': [], 'notes': []}
+    assert owner.put('/api/vault', json=body, headers=bearer()).status_code == 405   # rewrap-only path removed
+    assert owner.post('/api/vault/rotate', json=body).status_code == 401
+    assert owner.post('/api/vault/rotate', json=body, headers=bearer()).status_code == 200
+    assert owner.get('/api/board', headers=bearer()).status_code == 401              # old key is dead
     assert owner.get('/api/board', headers=bearer(new_key)).get_json()['vault']['wrapped']['ct'] == 'bmV3d3JhcA=='
 
 

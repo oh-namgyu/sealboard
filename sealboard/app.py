@@ -26,7 +26,7 @@ SECURITY_HEADERS = {
 }
 
 
-def _check_host() -> Any:
+def check_host() -> Any:
     """Refuse unknown Host headers (DNS rebinding). Add your domain via SEALBOARD_ALLOWED_HOSTS."""
     host = (request.host or '').lower()
     name = host.rsplit(':', 1)[0] if not host.endswith(']') else host
@@ -35,7 +35,7 @@ def _check_host() -> Any:
     return None
 
 
-def _security_headers(resp: Response) -> Response:
+def security_headers(resp: Response) -> Response:
     for key, value in SECURITY_HEADERS.items():
         resp.headers.setdefault(key, value)
     if request.path.startswith('/api/'):
@@ -43,18 +43,24 @@ def _security_headers(resp: Response) -> Response:
     return resp
 
 
-def create_app(data_dir: str, setup_code: Optional[str] = None, allowed_hosts: Iterable[str] = ()) -> Flask:
-    """Build the app for one data directory. If no vault exists yet, ``setup_code`` (or a random one) gates
-    its creation and is exposed as ``app.config['SEALBOARD_SETUP_CODE']`` for the launcher to print.
+def base_app(allowed_hosts: Iterable[str] = ()) -> Flask:
+    """The page shell both modes share: static files, request-size cap, Host allowlist, security headers.
     ``allowed_hosts`` adds Host names (e.g. your domain behind a reverse proxy) to localhost/127.0.0.1/[::1]."""
     app = Flask(__name__)
-    app.config['MAX_CONTENT_LENGTH'] = st.MAX_BLOB + 1024 * 1024
+    app.config['MAX_CONTENT_LENGTH'] = st.MAX_REQUEST
+    app.config['SEALBOARD_ALLOWED_HOSTS'] = {h.strip().lower() for h in (*DEFAULT_HOSTS, *allowed_hosts) if h.strip()}
+    app.before_request(check_host)
+    app.after_request(security_headers)
+    return app
+
+
+def create_app(data_dir: str, setup_code: Optional[str] = None, allowed_hosts: Iterable[str] = ()) -> Flask:
+    """Server mode for one data directory. If no vault exists yet, ``setup_code`` (or a random one) gates its
+    creation and is exposed as ``app.config['SEALBOARD_SETUP_CODE']`` for the launcher to print."""
+    app = base_app(allowed_hosts)
     store = st.Store(data_dir)
     has_vault = store.read(lambda b: bool(b.get('vault')))
     app.config['SEALBOARD_SETUP_CODE'] = None if has_vault else (setup_code or secrets.token_urlsafe(16))
-    app.config['SEALBOARD_ALLOWED_HOSTS'] = {h.strip().lower() for h in (*DEFAULT_HOSTS, *allowed_hosts) if h.strip()}
     app.extensions['sealboard'] = {'store': store, 'limiter': FailLimiter()}
-    app.before_request(_check_host)
     app.register_blueprint(bp)
-    app.after_request(_security_headers)
     return app

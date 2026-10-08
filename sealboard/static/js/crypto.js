@@ -3,8 +3,9 @@
 //   passphrase ──PBKDF2-SHA256(salt, 600k)──► 256-bit master ──HKDF-SHA256──┬─ "sealboard kek v1"  → KEK (stays here)
 //                                                                         └─ "sealboard auth v1" → auth key (bearer token;
 //                                                                                                   server keeps SHA-256 only)
-//   DEK = random AES-GCM-256 key, wrapped by the KEK. Every tab name, note and image is sealed with the DEK using a
-//   fresh 96-bit IV and the item id as additional authenticated data (so ciphertexts cannot be swapped between items).
+//   DEK = random AES-GCM-256 key, wrapped by the KEK. A passphrase change makes a new DEK and re-encrypts everything.
+//   Every tab name, note and image is sealed with the DEK, a fresh 96-bit IV and the item id as additional
+//   authenticated data (so ciphertexts cannot be swapped between items).
 const ITER = 600000;              // OWASP 2023 recommendation for PBKDF2-SHA256 — also the minimum we accept
 const MIN_SALT = 16;
 const enc = new TextEncoder();
@@ -76,21 +77,27 @@ export async function openVault(wrapped, kek) {
   dek = await unwrap(wrapped, kek, false);
 }
 
-// Passphrase change = re-wrap the same DEK under a new passphrase. Notes and images are not re-encrypted,
-// so someone who knew the old passphrase AND kept a copy of the data can still read it (see SECURITY.md).
-export async function rekey(vault, oldPass, newPass) {
+// Passphrase change step 1: prove the current passphrase, then make a brand-new DEK under the new one.
+// The caller re-encrypts everything with `key` (rotate.js) and calls adopt(key) once the server has swapped.
+export async function prepareRotation(vault, oldPass, newPass) {
   const [old, fresh] = await Promise.all([derive(oldPass, vault), freshKeys(newPass)]);
-  const key = await unwrap(vault.wrapped, old.kek, true);
-  return { vault: { ...fresh.params, wrapped: await wrap(key, fresh.kek) }, authKey: fresh.authKey };
+  await unwrap(vault.wrapped, old.kek, false);                  // throws if the current passphrase is wrong
+  const key = await crypto.subtle.generateKey(AES, true, ['encrypt', 'decrypt']);
+  const next = { ...fresh.params, wrapped: await wrap(key, fresh.kek) };
+  return { vault: next, authKey: fresh.authKey, key: await unwrap(next.wrapped, fresh.kek, false) };
+}
+
+export function adopt(key) {
+  dek = key;
 }
 
 export function lock() {
   dek = null;
 }
 
-async function encrypt(id, bytes) {
+async function encrypt(id, bytes, key) {
   const iv = rand(12);
-  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad(id) }, dek, bytes);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad(id) }, key, bytes);
   return { iv, ct: new Uint8Array(ct) };
 }
 
@@ -98,8 +105,9 @@ async function decrypt(id, iv, ct) {
   return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: aad(id) }, dek, ct));
 }
 
-export async function sealJSON(id, obj) {
-  const s = await encrypt(id, enc.encode(JSON.stringify(obj)));
+// `key` defaults to the unlocked DEK; a key rotation passes the new one.
+export async function sealJSON(id, obj, key = dek) {
+  const s = await encrypt(id, enc.encode(JSON.stringify(obj)), key);
   return { iv: b64(s.iv), ct: b64(s.ct) };
 }
 
@@ -109,13 +117,13 @@ export async function openJSON(id, item) {
 
 // Image blob on the wire: [12-byte iv][ciphertext]. Plaintext = [1-byte mime length][mime][bytes],
 // so even the image type stays private.
-export async function sealBlob(id, mime, bytes) {
+export async function sealBlob(id, mime, bytes, key = dek) {
   const m = enc.encode(mime);
   const pt = new Uint8Array(1 + m.length + bytes.length);
   pt[0] = m.length;
   pt.set(m, 1);
   pt.set(bytes, 1 + m.length);
-  const s = await encrypt(id, pt);
+  const s = await encrypt(id, pt, key);
   const out = new Uint8Array(12 + s.ct.length);
   out.set(s.iv);
   out.set(s.ct, 12);

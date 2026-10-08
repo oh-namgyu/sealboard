@@ -49,6 +49,8 @@
   <label for="oldPass">Change passphrase — current passphrase (leave empty to keep it)</label><input id="oldPass" type="password" autocomplete="current-password">
   <label for="newPass">New passphrase (10+ characters)</label><input id="newPass" type="password" autocomplete="new-password">
   <label for="newPass2">Repeat new passphrase</label><input id="newPass2" type="password" autocomplete="new-password">
+  <p class="sb-lock-hint">Changing the passphrase re-encrypts all notes and images with a new key. Keep this window open until it finishes.</p>
+  <p class="sb-lock-hint" id="keyStatus" role="status" aria-live="polite"></p>
   <p class="sb-error" id="keyErr" role="alert"></p>
   <div class="sb-dialog-row"><button class="sb-btn" type="button" id="keyCancel">Cancel</button><button class="sb-btn sb-btn-primary" type="button" id="keySave">Save</button></div>
 </dialog>

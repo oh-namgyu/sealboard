@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
 
-> **한글 요약** — 내 컴퓨터·서버에 직접 띄우는 **스티커 메모판**입니다. 탭별로 메모를 붙이고 끌어서 옮기고 크기를 조절하고 접을 수 있고, 일반 글·서식 글·캡처 이미지(붙여넣기·끌어놓기·화면 캡처)를 넣을 수 있습니다. 탭 이름·메모·이미지는 **브라우저 안에서만** 암호화·복호화되고 서버에는 암호문만 남아서, 서버 관리자나 데이터 파일을 가져간 사람도 내용을 읽을 수 없습니다. 로그인도 패스프레이즈에서 파생한 키로 하므로 서버는 패스프레이즈를 받지 않습니다 — 대신 **패스프레이즈를 잊으면 누구도 복구할 수 없습니다.** `pip install` 또는 Docker 로 실행합니다.
+> **한글 요약** — 내 컴퓨터·서버에 직접 띄우는 **스티커 메모판**입니다. 탭별로 메모를 붙이고 끌어서 옮기고 크기를 조절하고 접을 수 있고, 일반 글·서식 글·캡처 이미지(붙여넣기·끌어놓기·화면 캡처)를 넣을 수 있습니다. 탭 이름·메모·이미지는 **브라우저 안에서만** 암호화·복호화되고 서버에는 암호문만 남아서, 서버 관리자나 데이터 파일을 가져간 사람도 내용을 읽을 수 없습니다. 로그인도 패스프레이즈에서 파생한 키로 하므로 서버는 패스프레이즈를 받지 않고, 패스프레이즈를 바꾸면 **새 데이터 키로 전부 다시 암호화**합니다. 원격 서버를 쓸 때는 `--remote` **로컬 클라이언트 모드**로 페이지 코드를 내 PC 에서 띄워, 서버가 탈취돼도 코드를 바꿔치기할 수 없게 합니다. 대신 **패스프레이즈를 잊으면 누구도 복구할 수 없습니다.** `pip install` 또는 Docker 로 실행합니다.
 
 A self-hosted sticky-note board whose notes are encrypted in your browser — the server only ever stores ciphertext.
 
@@ -74,12 +74,14 @@ flowchart LR
   additional data, so the server cannot swap ciphertexts between items.
 - The server authenticates you by the auth key (it stores only its hash) and hands out the wrapped
   data key only after that. Someone who just reaches the server learns nothing but the KDF settings.
-- Changing the passphrase re-wraps the data key in about a second; notes are not re-encrypted.
+- Changing the passphrase creates a **new data key**: every note, tab name and image is re-encrypted in
+  the browser and the server swaps them all in one atomic step, deleting images encrypted under the old
+  key. Someone who knew the old passphrase cannot read anything you write afterwards.
 
 What stays visible to the server: how many tabs and notes exist, their positions, sizes and colours,
-which images belong to which note, and timestamps. **A compromised server can serve malicious
-JavaScript** — the limit of every in-page encryption scheme — so run it on a machine you control.
-The full threat model is in [SECURITY.md](SECURITY.md).
+which images belong to which note, and timestamps. A web page is only as trustworthy as the server that
+sends its code — see [local client mode](#remote-server-local-code) for how to take the server out of that
+picture. The full threat model is in [SECURITY.md](SECURITY.md).
 
 ## Using it from other devices
 
@@ -98,6 +100,20 @@ SEALBOARD_ALLOWED_HOSTS=notes.example.org SEALBOARD_TRUSTED_PROXY=127.0.0.1 seal
 
 `SEALBOARD_TRUSTED_PROXY` makes failed-login limits apply per real client instead of per proxy.
 
+## Remote server, local code
+
+If sealboard runs on another machine (a VPS, a home server), run a **local client** on the computer you
+use it from:
+
+```bash
+sealboard --remote https://notes.example.org      # then open http://127.0.0.1:8080
+```
+
+The local client serves the app from your own installation and only forwards `/api/*` to the remote, so
+the remote never delivers code to your browser — even a fully compromised remote server only ever sees
+and returns ciphertext. Opening the remote's page directly (for example from a phone) still works, but
+then you trust the code that server sends.
+
 ## Configuration
 
 | Option | Env variable | Default | |
@@ -107,6 +123,7 @@ SEALBOARD_ALLOWED_HOSTS=notes.example.org SEALBOARD_TRUSTED_PROXY=127.0.0.1 seal
 | `--data` | `SEALBOARD_DATA` | `./sealboard-data` | `board.json` + `blobs/` — back this up; it is ciphertext |
 | `--allowed-hosts` | `SEALBOARD_ALLOWED_HOSTS` | — | extra `Host` names (comma-separated) besides localhost |
 | `--trusted-proxy` | `SEALBOARD_TRUSTED_PROXY` | — | your reverse proxy's address; trust its `X-Forwarded-*` |
+| `--remote` | `SEALBOARD_REMOTE` | — | local client mode: serve the app here, keep data on this `https://` server |
 | | `SEALBOARD_SETUP_CODE` | random | fixed setup code (16+ characters), e.g. for automation |
 
 ## API
@@ -118,7 +135,7 @@ ciphertext (`iv`, `ct`) and layout.
 |---|---|---|
 | `GET` | `/api/vault` | KDF settings (or `{"exists": false}`) |
 | `POST` | `/api/vault` | create the vault (needs the setup code) |
-| `PUT` | `/api/vault` | change passphrase (new KDF settings, wrapped key, auth key) |
+| `POST` | `/api/vault/rotate` | change passphrase: new KDF settings, new wrapped data key, every tab and note re-encrypted — swapped atomically |
 | `GET` | `/api/board` | wrapped data key, tabs, notes |
 | `PUT` `DELETE` | `/api/tabs/<id>` | create/rename · delete with its notes |
 | `POST` | `/api/tabs/order` | reorder |

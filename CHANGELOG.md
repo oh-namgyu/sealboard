@@ -11,8 +11,10 @@ All notable changes to this project are documented here. The format follows
   rename, reorder and delete tabs.
 - Plain-text and rich-text notes (DOMPurify allowlist), search across all tabs.
 - Images by paste, drag-and-drop, file picker or screen capture — encrypted before upload.
-- Browser-only end-to-end encryption (PBKDF2-SHA256 → AES-GCM-256) with zero-knowledge
-  authentication, one-time setup code, passphrase change without re-encryption, auto-lock.
+- Browser-only end-to-end encryption (PBKDF2-SHA256 → HKDF → AES-GCM-256) with zero-knowledge
+  authentication, one-time setup code and auto-lock.
+- Passphrase change rotates the data key: everything is re-encrypted and swapped atomically.
+- Local client mode (`--remote`): the app is served from your machine, data stays on a remote server.
 - Optimistic concurrency: edits from two windows never overwrite each other silently.
 - Strict Content-Security-Policy, rate-limited logins, Docker image running as non-root.
 

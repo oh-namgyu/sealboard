@@ -49,15 +49,48 @@ def create_vault() -> Any:
     return jsonify({'ok': True})
 
 
-@web.bp.route('/api/vault', methods=['PUT'])
-def change_passphrase() -> Any:
-    """Re-wrap the data key under a new passphrase (notes are not re-encrypted). The old auth key stops working."""
+def _rotated(items: Any, kind: str) -> dict:
+    """Validate the re-encrypted copies sent with a key rotation → id → {sealed, baseRev, blobs}."""
+    if not isinstance(items, list):
+        raise st.Reject(400, 'bad ' + kind)
+    out = {}
+    for item in items:
+        if not isinstance(item, dict):
+            raise st.Reject(400, 'bad ' + kind)
+        iid = st.check_id(item.get('id'), kind[0])
+        out[iid] = {'sealed': st.sealed(item), 'baseRev': item.get('baseRev'),
+                    'blobs': st.blob_ids(item) if kind == 'notes' else None}
+    return out
+
+
+def _swap(current: list, incoming: dict) -> None:
+    """Replace every item's ciphertext — all or nothing: the sets must match and no item may have moved on."""
+    if {c['id'] for c in current} != set(incoming):
+        raise st.Reject(409, 'board changed')
+    for cur in current:
+        new = incoming[cur['id']]
+        if new['baseRev'] != cur['rev']:
+            raise st.Reject(409, 'conflict', current=cur)
+        cur.update(new['sealed'], rev=cur['rev'] + 1, updatedAt=web.now_iso())
+        if new['blobs'] is not None:
+            cur['blobs'] = new['blobs']
+
+
+@web.bp.route('/api/vault/rotate', methods=['POST'])
+def rotate_vault() -> Any:
+    """Passphrase change with a brand-new data key. Every tab and note arrives re-encrypted (images were uploaded
+    under new ids beforehand) and is swapped in one atomic save; images under the old key are deleted at once."""
     body = web.body()
     record = web.vault_record(body.get('vault'), body.get('authKey'))
+    tabs, notes = _rotated(body.get('tabs'), 'tabs'), _rotated(body.get('notes'), 'notes')
+    store = web.store()
 
     def mutate(board: dict) -> None:
+        _swap(board['tabs'], tabs)
+        _swap(board['notes'], notes)
         board['vault'] = record
-    web.store().update(mutate)
+        store.sweep_blobs(board, immediate=True)
+    store.update(mutate)
     return jsonify({'ok': True})
 
 

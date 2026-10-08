@@ -26,6 +26,7 @@ COLORS = ('yellow', 'pink', 'green', 'blue', 'purple', 'gray')
 GEOM = {'x': (0, 50000), 'y': (0, 50000), 'w': (160, 4000), 'h': (44, 4000), 'z': (0, 10 ** 7)}
 MAX_CT = 1_000_000            # one note's ciphertext (base64); images travel separately as blobs
 MAX_BLOB = 8 * 1024 * 1024
+MAX_REQUEST = 32 * 1024 * 1024   # largest request body: a passphrase change carries every note at once
 MAX_BLOBS_PER_NOTE = 100
 MIN_KDF_ITER = 600_000       # the browser always uses 600k and refuses anything lower
 ORPHAN_GRACE_SEC = 3600       # an unreferenced blob is deleted only after this long (upload→save gap, cut/paste)
@@ -92,8 +93,9 @@ class Store:
             self._cache = ((stat.st_mtime_ns, stat.st_size), board)
             return out
 
-    def sweep_blobs(self, board: dict) -> None:
-        """Remember when each unreferenced blob was first seen; delete it once ORPHAN_GRACE_SEC has passed."""
+    def sweep_blobs(self, board: dict, immediate: bool = False) -> None:
+        """Remember when each unreferenced blob was first seen; delete it once ORPHAN_GRACE_SEC has passed
+        (``immediate``: delete every unreferenced blob now — used after a key rotation)."""
         refs = {b for n in board['notes'] for b in n.get('blobs', [])}
         try:
             files = {f[:-4] for f in os.listdir(self.blob_dir) if f.endswith('.bin')}
@@ -102,7 +104,7 @@ class Store:
         now, seen, keep = time.time(), board.get('orphans', {}), {}
         for bid in files - refs:
             first = seen.get(bid, now)
-            if now - first > ORPHAN_GRACE_SEC:
+            if immediate or now - first > ORPHAN_GRACE_SEC:
                 with contextlib.suppress(FileNotFoundError):
                     os.remove(self.blob_path(bid))
             else:

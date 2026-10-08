@@ -6,6 +6,7 @@ import { $ } from './dom.js';
 import { htmlToText } from './editor.js';
 import { initLightbox, revokeAll } from './images.js';
 import { PREF, idleLock, initKeyDialog, readPref, showLock, showLockError, writePref } from './lock.js';
+import { rotate } from './rotate.js';
 import { Sync } from './sync.js';
 import { Tabs } from './tabs.js';
 
@@ -238,6 +239,22 @@ async function onConflict(note, current, local) {
   toast('This note changed in another window — your edit was kept as a copy next to it');
 }
 
+// New passphrase → new data key: everything is re-encrypted and swapped on the server, then this page switches
+// to the new token and key. The modal dialog keeps the board untouched while this runs.
+async function changePassphrase(oldPass, newPass, progress) {
+  await sync.flush();
+  const { next, notes } = await rotate({ vault: state.vault, tabs: state.tabs, notes: [...state.notes.values()],
+    oldPass, newPass, progress });
+  setToken(next.authKey);
+  sc.adopt(next.key);
+  state.vault = next.vault;
+  state.tabs.forEach(t => { t.rev += 1; });
+  notes.forEach(({ note, body, blobs }) => Object.assign(note, { body, blobs, rev: note.rev + 1 }));
+  revokeAll();                            // cached image URLs belong to the old blob ids
+  textCache.clear();
+  renderAll();
+}
+
 // ── start ───────────────────────────────────────────────────────────────────
 
 $('newNote').addEventListener('click', () => newNote());
@@ -249,7 +266,7 @@ $('q').addEventListener('keydown', e => {
 });
 window.addEventListener('beforeunload', e => { if (sync.pending()) { e.preventDefault(); e.returnValue = ''; } });
 whenUnauthorized(() => lockNow('Signed out — the passphrase was changed in another window', true));
-initKeyDialog({ getVault: () => state.vault, setVault: v => { state.vault = v; }, toast, resetIdle });
+initKeyDialog({ changePassphrase, toast, resetIdle });
 
 (async () => {
   if (!sc.supported) { showLockError('Browsers allow WebCrypto only on https:// or localhost. Open sealboard through HTTPS (see README).'); return; }

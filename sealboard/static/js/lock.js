@@ -119,13 +119,16 @@ export function idleLock(onIdle) {
   return reset;
 }
 
-// 🔑 dialog: auto-lock delay and (optionally) a new passphrase. Changing it only re-wraps the data key.
-export function initKeyDialog({ getVault, setVault, toast, resetIdle }) {
-  const dlg = $('keyDlg'), err = $('keyErr');
+// 🔑 dialog: auto-lock delay and (optionally) a new passphrase. A new passphrase also gets a new data key:
+// changePassphrase(old, next, progress) re-encrypts everything (see rotate.js) and must not be interrupted.
+export function initKeyDialog({ changePassphrase, toast, resetIdle }) {
+  const dlg = $('keyDlg'), err = $('keyErr'), status = $('keyStatus');
   const fields = ['oldPass', 'newPass', 'newPass2'].map($);
+  const busy = on => { ['keySave', 'keyCancel'].forEach(id => { $(id).disabled = on; }); dlg.dataset.busy = on ? '1' : ''; };
+  dlg.addEventListener('cancel', e => { if (dlg.dataset.busy) e.preventDefault(); });   // no Escape mid-rotation
   $('keyBtn').addEventListener('click', () => {
     fields.forEach(f => { f.value = ''; });
-    err.textContent = '';
+    err.textContent = status.textContent = '';
     $('idleMin').value = readPref(PREF.idleMin, String(DEFAULT_IDLE_MIN));
     dlg.showModal();
   });
@@ -137,15 +140,17 @@ export function initKeyDialog({ getVault, setVault, toast, resetIdle }) {
     if (!old && !next) { dlg.close(); toast('Auto-lock setting saved'); return; }
     err.textContent = newPassError(next, next2);
     if (err.textContent) return;
+    busy(true);
     try {
-      const { vault, authKey } = await sc.rekey(getVault(), old, next);
-      await api.changeVault(vault, authKey);
-      setToken(authKey);
-      setVault(vault);
+      await changePassphrase(old, next, msg => { status.textContent = msg; });
       dlg.close();
-      toast('Passphrase changed. The data key stays the same — see SECURITY.md for what that means');
+      toast('Passphrase changed — everything was re-encrypted with a new key');
     } catch (ex) {
-      err.textContent = failMessage(ex, 'Current passphrase is wrong');
+      err.textContent = ex.status === 409 ? 'Notes changed in another window — try again'
+        : failMessage(ex, 'Current passphrase is wrong');
+    } finally {
+      busy(false);
+      status.textContent = '';
     }
   });
 }
