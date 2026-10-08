@@ -186,3 +186,20 @@ def test_write_rechecks_the_key_inside_the_lock(app, owner, store):
             web.update(lambda board: None)
         assert e.value.status == 401
 
+
+def test_tab_order_rejects_malformed_ids_instead_of_crashing(api):
+    _tab(api)
+    for ids in ([1, 2], [None], [{'x': 1}], ['../etc']):
+        assert api('post', '/api/tabs/order', {'ids': ids}).status_code == 400
+
+
+def test_blob_upload_rechecks_the_key(app, owner):
+    from flask import g
+
+    from sealboard import web
+    with app.test_request_context('/api/blobs/b_abcdefghij', method='PUT'):
+        g.auth_hash = 'stale-hash-from-before-a-passphrase-change'
+        with pytest.raises(st.Reject) as e:
+            web.still_owner()
+        assert e.value.status == 401
+

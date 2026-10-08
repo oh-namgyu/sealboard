@@ -62,16 +62,24 @@ def _require_owner() -> Any:
     return None
 
 
+def _current_key(board: dict) -> None:
+    if (board.get('vault') or {}).get('authHash') != g.get('auth_hash'):
+        raise st.Reject(401, 'unauthorized')       # a passphrase change committed after this request was let in
+
+
 def update(mutate: Callable[[dict], Any]) -> Any:
     """store().update for owner requests, re-checking inside the write lock that the key this request was
-    authenticated with is still current (a passphrase change may have committed in between)."""
-    seen = g.get('auth_hash')
-
+    authenticated with is still current."""
     def guarded(board: dict) -> Any:
-        if (board.get('vault') or {}).get('authHash') != seen:
-            raise st.Reject(401, 'unauthorized')
+        _current_key(board)
         return mutate(board)
     return store().update(guarded)
+
+
+def still_owner() -> None:
+    """The same re-check for writes outside board.json (image files). A blob that still slips in right after a
+    passphrase change is unreferenced and removed by the orphan sweep."""
+    store().read(_current_key)
 
 
 @bp.errorhandler(st.Reject)

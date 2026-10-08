@@ -122,6 +122,7 @@ def order_tabs() -> Any:
     ids = web.body().get('ids')
     if not isinstance(ids, list):
         raise st.Reject(400, 'ids required')
+    ids = [st.check_id(i, 't') for i in ids]
 
     def mutate(board: dict) -> None:
         if sorted(ids) != sorted(t['id'] for t in board['tabs']):
@@ -233,6 +234,7 @@ def put_blob(bid: str) -> Any:
         raise st.Reject(413, 'blob too large')
     if len(data) < 12 + 16:
         raise st.Reject(400, 'blob too small')
+    web.still_owner()
     path = web.store().blob_path(bid)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     try:

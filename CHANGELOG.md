@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- `POST /api/tabs/order` answers 400 instead of 500 when the id list holds non-strings.
+- Image uploads re-check that the auth key is still current, like every other write.
+
 ## [0.1.1] - 2026-10-08
 
 ### Fixed
