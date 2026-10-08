@@ -4,18 +4,28 @@
 import { api } from './api.js';
 import * as sc from './crypto.js';
 
-// Images are re-uploaded under new ids, one at a time (bounded memory: each can be up to 8 MB).
+const BLOB_ID = /^b_[A-Za-z0-9_-]{10,40}$/;
+const MAX_BYTES = 30 * 1024 * 1024;     // stay under the server's 32 MB request cap
+
+// Images are re-uploaded under new ids, one at a time (bounded memory: each can be up to 8 MB). An image that is
+// missing or does not decrypt is unusable anyway: it is reported and left out instead of blocking the change.
 async function reencryptImages(notes, key, progress) {
-  const ids = [...new Set(notes.flatMap(n => n.blobs || []))];
-  const renamed = new Map();
+  const ids = [...new Set(notes.flatMap(n => n.blobs || []))].filter(id => BLOB_ID.test(id));
+  const renamed = new Map(), lost = [];
   for (const [i, id] of ids.entries()) {
     progress(`Re-encrypting images ${i + 1}/${ids.length}…`);
-    const image = await sc.openBlob(id, await api.getBlob(id));
+    let image;
+    try {
+      image = await sc.openBlob(id, await api.getBlob(id));
+    } catch (e) {
+      if (e.status === 404 || e.name === 'OperationError') { lost.push(id); continue; }
+      throw e;
+    }
     const fresh = sc.newId('b');
     await api.putBlob(fresh, await sc.sealBlob(fresh, image.type, new Uint8Array(await image.arrayBuffer()), key));
     renamed.set(id, fresh);
   }
-  return renamed;
+  return { renamed, lost };
 }
 
 // Rich bodies point at images by data-blob id; plain bodies have none.
@@ -24,22 +34,39 @@ const relink = (body, renamed) =>
 
 async function reencryptNote(n, key, renamed) {
   const body = n.kind === 'rich' ? relink(n.body || '', renamed) : n.body;
-  const blobs = (n.blobs || []).map(b => renamed.get(b) || b);
+  const blobs = (n.blobs || []).filter(b => renamed.has(b)).map(b => renamed.get(b));
   const sealed = await sc.sealJSON(n.id, { title: n.title, kind: n.kind, body }, key);
   return { note: n, body, blobs, wire: { id: n.id, baseRev: n.rev, blobs, ...sealed } };
 }
 
-// → { next: {vault, authKey, key}, notes: [{note, body, blobs}] } once the server has swapped everything.
-// Throws (and changes nothing that matters) if the current passphrase is wrong or another window edited meanwhile.
-export async function rotate({ vault, tabs, notes, oldPass, newPass, progress }) {
+async function prepare(vault, oldPass, newPass) {
+  try {
+    return await sc.prepareRotation(vault, oldPass, newPass);
+  } catch (e) {
+    throw e.name === 'OperationError' ? Object.assign(new Error('Current passphrase is wrong'), { wrongPassphrase: true }) : e;
+  }
+}
+
+function checkSize(payload) {
+  if (JSON.stringify(payload).length > MAX_BYTES) {
+    throw new Error('the notes are too large to re-encrypt in one request (over 30 MB of text)');
+  }
+}
+
+// → { next: {vault, authKey, key}, notes: [{note, body, blobs}], lost, dropped } once the server has swapped
+// everything. `drop` = ids of notes this browser could not decrypt; they are removed in the same step.
+// Throws (and changes nothing that matters) on a wrong passphrase or if another window edited meanwhile.
+export async function rotate({ vault, tabs, notes, drop, oldPass, newPass, progress }) {
   progress('Checking passphrase…');
-  const next = await sc.prepareRotation(vault, oldPass, newPass);
-  const renamed = await reencryptImages(notes, next.key, progress);
+  const next = await prepare(vault, oldPass, newPass);
+  const { renamed, lost } = await reencryptImages(notes, next.key, progress);
   progress('Re-encrypting notes…');
   const done = await Promise.all(notes.map(n => reencryptNote(n, next.key, renamed)));
   const sealedTabs = await Promise.all(tabs.map(async t =>
     ({ id: t.id, baseRev: t.rev, ...(await sc.sealJSON(t.id, { name: t.name }, next.key)) })));
+  const payload = { vault: next.vault, authKey: next.authKey, tabs: sealedTabs, notes: done.map(d => d.wire), drop };
+  checkSize(payload);
   progress('Saving…');
-  await api.rotateVault({ vault: next.vault, authKey: next.authKey, tabs: sealedTabs, notes: done.map(d => d.wire) });
-  return { next, notes: done };
+  await api.rotateVault(payload);
+  return { next, notes: done, lost: lost.length, dropped: drop.length };
 }

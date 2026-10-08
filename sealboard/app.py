@@ -24,14 +24,20 @@ SECURITY_HEADERS = {
     'Referrer-Policy': 'no-referrer',
     'X-Frame-Options': 'DENY',
 }
+# API responses are data, never a document: even if some byte stream were mislabelled, it cannot run as a page.
+API_CSP = "default-src 'none'; sandbox"
 
 
-def check_host() -> Any:
-    """Refuse unknown Host headers (DNS rebinding). Add your domain via SEALBOARD_ALLOWED_HOSTS."""
+def check_request() -> Any:
+    """Refuse unknown Host headers (DNS rebinding; add your domain via SEALBOARD_ALLOWED_HOSTS) and browser
+    navigations or subresource loads of /api/* — the app only ever calls the API with fetch()."""
     host = (request.host or '').lower()
     name = host.rsplit(':', 1)[0] if not host.endswith(']') else host
     if name not in current_app.config['SEALBOARD_ALLOWED_HOSTS']:
         return jsonify({'error': 'host not allowed'}), 400
+    if request.path.startswith('/api/') and (request.headers.get('Sec-Fetch-Mode') == 'navigate'
+                                             or request.headers.get('Sec-Fetch-Dest', 'empty') != 'empty'):
+        return jsonify({'error': 'the API is for fetch() only'}), 400
     return None
 
 
@@ -39,6 +45,8 @@ def security_headers(resp: Response) -> Response:
     for key, value in SECURITY_HEADERS.items():
         resp.headers.setdefault(key, value)
     if request.path.startswith('/api/'):
+        resp.headers['Content-Security-Policy'] = API_CSP
+        resp.headers['Content-Disposition'] = 'attachment'
         resp.headers.setdefault('Cache-Control', 'no-store')
     return resp
 
@@ -49,7 +57,7 @@ def base_app(allowed_hosts: Iterable[str] = ()) -> Flask:
     app = Flask(__name__)
     app.config['MAX_CONTENT_LENGTH'] = st.MAX_REQUEST
     app.config['SEALBOARD_ALLOWED_HOSTS'] = {h.strip().lower() for h in (*DEFAULT_HOSTS, *allowed_hosts) if h.strip()}
-    app.before_request(check_host)
+    app.before_request(check_request)
     app.after_request(security_headers)
     return app
 

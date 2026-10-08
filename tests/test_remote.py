@@ -4,6 +4,7 @@ import threading
 
 import pytest
 from conftest import SETUP, b64key, bearer, read_board, vault_body
+from flask import Flask, Response, redirect
 from werkzeug.serving import make_server
 
 from sealboard import cli
@@ -21,7 +22,7 @@ def remote(tmp_path):
 
 
 @pytest.mark.parametrize('url', ['http://notes.example.org', 'ftp://notes.example.org', 'https://notes.example.org/sub',
-                                 'https://notes.example.org/?x=1', 'notes.example.org'])
+                                 'https://notes.example.org/?x=1', 'notes.example.org', 'https://user:pw@notes.example.org'])
 def test_remote_must_be_an_https_root(url):
     with pytest.raises(ValueError):
         check_remote(url)
@@ -72,3 +73,57 @@ def test_cli_refuses_a_public_bind_or_bad_remote(capsys):
     assert 'localhost only' in capsys.readouterr().err
     assert cli.main(['--remote', 'http://notes.example.org']) == 2
     assert 'https' in capsys.readouterr().err
+
+
+@pytest.fixture
+def hostile():
+    """A compromised remote: serves HTML and JavaScript from /api and redirects elsewhere."""
+    app = Flask('hostile')
+    seen = {}
+
+    @app.route('/api/page')
+    def page():
+        return Response('<script src="/api/x.js"></script>', mimetype='text/html',
+                        headers={'Cache-Control': 'max-age=31536000', 'Set-Cookie': 'a=b'})
+
+    @app.route('/api/x.js')
+    def script():
+        return Response('alert(1)', mimetype='text/javascript')
+
+    @app.route('/api/hop')
+    def hop():
+        return redirect('http://127.0.0.1:9/steal', code=302)
+
+    @app.route('/api/<path:rest>')
+    def other(rest):
+        seen['path'] = rest
+        return {'ok': True}
+    srv = make_server('127.0.0.1', 0, app, threaded=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield create_client_app(f'http://127.0.0.1:{srv.server_port}').test_client(), seen
+    srv.shutdown()
+
+
+def test_remote_cannot_turn_api_responses_into_code(hostile):
+    client, _ = hostile
+    for path in ('/api/page', '/api/x.js'):
+        r = client.get(path)
+        assert r.mimetype == 'application/json' and r.headers['Content-Security-Policy'] == "default-src 'none'; sandbox"
+        assert r.headers['Content-Disposition'] == 'attachment' and 'Set-Cookie' not in r.headers
+        assert r.headers['Cache-Control'] == 'no-store'
+    assert client.get('/api/page', headers={'Sec-Fetch-Mode': 'navigate'}).status_code == 400
+
+
+def test_redirects_are_refused_not_followed(hostile):
+    client, _ = hostile
+    r = client.get('/api/hop', headers=bearer())
+    assert r.status_code == 502 and 'redirect' in r.get_json()['error']
+
+
+@pytest.mark.parametrize('path', ['/api/%2e%2e/admin', '/api/%252e%252e/admin', '/api/a%20b', '/api/board?x=1%0a'])
+def test_odd_paths_never_reach_the_remote_unchanged(hostile, path):
+    client, seen = hostile
+    r = client.get(path)
+    assert r.status_code in (200, 400, 404)
+    assert '..' not in seen.get('path', '') and ' ' not in seen.get('path', '')
+

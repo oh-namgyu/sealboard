@@ -11,7 +11,7 @@ import { Sync } from './sync.js';
 import { Tabs } from './tabs.js';
 
 const WORK_UI = ['q', 'newNote', 'keyBtn', 'lockBtn', 'saveState'];
-const state = { vault: null, tabs: [], notes: new Map(), active: null, cursor: -1 };
+const state = { vault: null, tabs: [], notes: new Map(), unreadable: [], active: null, cursor: -1 };
 const textCache = new Map();   // off-board note id → { title, body, text }: avoid re-parsing per search. Cleared on lock
 let toastTimer = null;
 let searchTimer = null;
@@ -40,7 +40,7 @@ const sync = new Sync({
   onError: msg => toast(msg, true),
 });
 const tabs = new Tabs($('tabs'), { onSelect: selectTab, onAdd: () => addTab(), onRename: renameTab, onDelete: deleteTab, onReorder: reorderTabs });
-const resetIdle = idleLock(() => lockNow('Locked after inactivity'));
+const idle = idleLock(() => lockNow('Locked after inactivity'));
 
 const query = () => $('q').value.trim().toLowerCase();
 const notesOf = tabId => [...state.notes.values()].filter(n => n.tab === tabId);
@@ -48,15 +48,20 @@ const tabOf = id => state.tabs.find(t => t.id === id);
 
 // ── unlock / lock ───────────────────────────────────────────────────────────
 
+// Items that do not decrypt (damaged, or written under another key) are not silently dropped: a tab keeps a
+// placeholder name (renaming it repairs it), a note is listed in state.unreadable and removed at the next
+// passphrase change.
 async function decryptAll(data) {
-  let bad = 0;
   const open = async item => {
     const { iv, ct, ...meta } = item;
-    try { return { ...meta, ...(await sc.openJSON(item.id, { iv, ct })) }; } catch (e) { bad++; return null; }
+    try { return { ...meta, ...(await sc.openJSON(item.id, { iv, ct })) }; } catch (e) { return { ...meta, unreadable: true }; }
   };
-  state.tabs = (await Promise.all(data.tabs.map(open))).filter(Boolean);
-  const notes = (await Promise.all(data.notes.map(open))).filter(Boolean);
-  state.notes = new Map(notes.map(n => [n.id, n]));
+  const tabs = await Promise.all(data.tabs.map(open));
+  state.tabs = tabs.map(({ unreadable, ...t }) => (unreadable ? { ...t, name: '(unreadable tab)' } : t));
+  const notes = await Promise.all(data.notes.map(open));
+  state.unreadable = notes.filter(n => n.unreadable).map(n => n.id);
+  state.notes = new Map(notes.filter(n => !n.unreadable).map(n => [n.id, n]));
+  const bad = tabs.filter(t => t.unreadable).length + state.unreadable.length;
   if (bad) toast(`${bad} item(s) could not be decrypted (damaged, or from another vault)`, true);
 }
 
@@ -68,15 +73,17 @@ async function enter(data) {
   state.active = tabOf(saved) ? saved : state.tabs[0].id;
   WORK_UI.forEach(id => $(id).classList.remove('hidden'));
   renderAll();
-  resetIdle();
+  idle.reset();
 }
 
 let locking = false;   // idle timer, the button and a revoked session may all fire at once
+let session = 0;       // bumped on every lock: a passphrase change that finishes afterwards must not revive keys
 
 // revoked = the server no longer accepts our key (passphrase changed elsewhere): pending saves cannot succeed.
 async function lockNow(reason, revoked = false) {
   if (locking || !sc.isUnlocked()) return;
   locking = true;
+  session++;
   if (!revoked) {
     try { await sync.flush(); } catch (e) { /* failures were already reported in the status line */ }
   }
@@ -86,7 +93,7 @@ async function lockNow(reason, revoked = false) {
   revokeAll();
   textCache.clear();
   board.clear();
-  Object.assign(state, { tabs: [], notes: new Map(), active: null, cursor: -1 });
+  Object.assign(state, { tabs: [], notes: new Map(), unreadable: [], active: null, cursor: -1 });
   $('tabs').replaceChildren();
   $('q').value = '';
   WORK_UI.forEach(id => $(id).classList.add('hidden'));
@@ -242,17 +249,22 @@ async function onConflict(note, current, local) {
 // New passphrase → new data key: everything is re-encrypted and swapped on the server, then this page switches
 // to the new token and key. The modal dialog keeps the board untouched while this runs.
 async function changePassphrase(oldPass, newPass, progress) {
+  const mine = session;
   await sync.flush();
-  const { next, notes } = await rotate({ vault: state.vault, tabs: state.tabs, notes: [...state.notes.values()],
-    oldPass, newPass, progress });
+  const result = await rotate({ vault: state.vault, tabs: state.tabs, notes: [...state.notes.values()],
+    drop: state.unreadable, oldPass, newPass, progress });
+  if (mine !== session) return result;    // locked meanwhile: the server has the new key; unlock with it
+  const { next, notes } = result;
   setToken(next.authKey);
   sc.adopt(next.key);
   state.vault = next.vault;
   state.tabs.forEach(t => { t.rev += 1; });
   notes.forEach(({ note, body, blobs }) => Object.assign(note, { body, blobs, rev: note.rev + 1 }));
+  state.unreadable = [];
   revokeAll();                            // cached image URLs belong to the old blob ids
   textCache.clear();
   renderAll();
+  return result;
 }
 
 // ── start ───────────────────────────────────────────────────────────────────
@@ -266,7 +278,7 @@ $('q').addEventListener('keydown', e => {
 });
 window.addEventListener('beforeunload', e => { if (sync.pending()) { e.preventDefault(); e.returnValue = ''; } });
 whenUnauthorized(() => lockNow('Signed out — the passphrase was changed in another window', true));
-initKeyDialog({ changePassphrase, toast, resetIdle });
+initKeyDialog({ changePassphrase, toast, idle });
 
 (async () => {
   if (!sc.supported) { showLockError('Browsers allow WebCrypto only on https:// or localhost. Open sealboard through HTTPS (see README).'); return; }

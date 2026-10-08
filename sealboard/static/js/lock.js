@@ -107,24 +107,28 @@ export function showLockError(msg) {
   $('lockForm').classList.add('is-disabled');
 }
 
-// Calls onIdle() N minutes after the last input. Returns the reset function.
+// Calls onIdle() N minutes after the last input. Returns { reset, pause(on) } — paused during a passphrase change.
 export function idleLock(onIdle) {
-  let timer = null;
+  let timer = null, paused = false;
   const reset = () => {
     clearTimeout(timer);
     const minutes = Number(readPref(PREF.idleMin, DEFAULT_IDLE_MIN));
-    if (minutes > 0 && sc.isUnlocked()) timer = setTimeout(onIdle, minutes * 60000);
+    if (!paused && minutes > 0 && sc.isUnlocked()) timer = setTimeout(onIdle, minutes * 60000);
   };
   ['pointerdown', 'keydown', 'wheel'].forEach(ev => document.addEventListener(ev, reset, { passive: true }));
-  return reset;
+  return { reset, pause: on => { paused = on; reset(); } };
 }
 
 // 🔑 dialog: auto-lock delay and (optionally) a new passphrase. A new passphrase also gets a new data key:
 // changePassphrase(old, next, progress) re-encrypts everything (see rotate.js) and must not be interrupted.
-export function initKeyDialog({ changePassphrase, toast, resetIdle }) {
+export function initKeyDialog({ changePassphrase, toast, idle }) {
   const dlg = $('keyDlg'), err = $('keyErr'), status = $('keyStatus');
   const fields = ['oldPass', 'newPass', 'newPass2'].map($);
-  const busy = on => { ['keySave', 'keyCancel'].forEach(id => { $(id).disabled = on; }); dlg.dataset.busy = on ? '1' : ''; };
+  const busy = on => {
+    ['keySave', 'keyCancel'].forEach(id => { $(id).disabled = on; });
+    dlg.dataset.busy = on ? '1' : '';
+    idle.pause(on);
+  };
   dlg.addEventListener('cancel', e => { if (dlg.dataset.busy) e.preventDefault(); });   // no Escape mid-rotation
   $('keyBtn').addEventListener('click', () => {
     fields.forEach(f => { f.value = ''; });
@@ -135,19 +139,21 @@ export function initKeyDialog({ changePassphrase, toast, resetIdle }) {
   $('keyCancel').addEventListener('click', () => dlg.close());
   $('keySave').addEventListener('click', async () => {
     writePref(PREF.idleMin, $('idleMin').value);
-    resetIdle();
+    idle.reset();
     const [old, next, next2] = fields.map(f => f.value);
     if (!old && !next) { dlg.close(); toast('Auto-lock setting saved'); return; }
     err.textContent = newPassError(next, next2);
     if (err.textContent) return;
     busy(true);
     try {
-      await changePassphrase(old, next, msg => { status.textContent = msg; });
+      const r = await changePassphrase(old, next, msg => { status.textContent = msg; });
       dlg.close();
-      toast('Passphrase changed — everything was re-encrypted with a new key');
+      const extra = [r.lost && `${r.lost} unreadable image(s) dropped`, r.dropped && `${r.dropped} unreadable note(s) removed`];
+      const note = extra.filter(Boolean).join(', ');
+      toast('Passphrase changed — everything was re-encrypted with a new key' + (note ? ` (${note})` : ''));
     } catch (ex) {
-      err.textContent = ex.status === 409 ? 'Notes changed in another window — try again'
-        : failMessage(ex, 'Current passphrase is wrong');
+      err.textContent = ex.wrongPassphrase ? 'Current passphrase is wrong'
+        : ex.status === 409 ? 'Notes changed in another window — try again' : 'Failed: ' + ex.message;
     } finally {
       busy(false);
       status.textContent = '';

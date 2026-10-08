@@ -53,6 +53,7 @@ class Store:
         self.board_path = os.path.join(data_dir, 'board.json')
         self._lock = threading.Lock()
         self._cache: Optional[Tuple[Tuple[int, int], dict]] = None
+        self._doomed: set = set()      # blob ids to delete once the current update has been committed
 
     def blob_path(self, bid: str) -> str:
         return os.path.join(self.blob_dir, bid + '.bin')
@@ -76,22 +77,36 @@ class Store:
             return view(self._board())
 
     def update(self, mutate: Callable[[dict], Any]) -> Any:
-        """Mutate the board and save it atomically. If ``mutate`` raises, nothing is written."""
+        """Mutate the board and save it atomically. If anything fails, nothing on disk changes: the cache is
+        dropped and blob files picked for deletion are only removed after board.json has been replaced."""
         with self._lock:
-            board = self._board()
             try:
+                board = self._board()
                 out = mutate(board)
+                self._write(board)
             except BaseException:
-                self._cache = None          # drop any half-applied change; the file is untouched
+                self._cache = None
+                self._doomed.clear()
                 raise
-            os.makedirs(self.data_dir, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=self.data_dir, prefix='.board-', suffix='.tmp')
+            for bid in self._doomed:
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(self.blob_path(bid))
+            self._doomed.clear()
+            return out
+
+    def _write(self, board: dict) -> None:
+        os.makedirs(self.data_dir, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=self.data_dir, prefix='.board-', suffix='.tmp')
+        try:
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 f.write(json.dumps(board, ensure_ascii=False, separators=(',', ':')))
             os.replace(tmp, self.board_path)
-            stat = os.stat(self.board_path)
-            self._cache = ((stat.st_mtime_ns, stat.st_size), board)
-            return out
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(tmp)
+            raise
+        stat = os.stat(self.board_path)
+        self._cache = ((stat.st_mtime_ns, stat.st_size), board)
 
     def sweep_blobs(self, board: dict, immediate: bool = False) -> None:
         """Remember when each unreferenced blob was first seen; delete it once ORPHAN_GRACE_SEC has passed
@@ -105,8 +120,7 @@ class Store:
         for bid in files - refs:
             first = seen.get(bid, now)
             if immediate or now - first > ORPHAN_GRACE_SEC:
-                with contextlib.suppress(FileNotFoundError):
-                    os.remove(self.blob_path(bid))
+                self._doomed.add(bid)          # removed by update() after the board is safely on disk
             else:
                 keep[bid] = first
         board['orphans'] = keep

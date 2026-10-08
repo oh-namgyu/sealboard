@@ -144,3 +144,45 @@ def test_rotation_is_all_or_nothing(api, store):
     assert read_board(store) == before
     assert api('get', '/api/board').status_code == 200                         # still the old key
 
+
+def test_rotation_drops_only_listed_unreadable_notes(api, store):
+    _tab(api)
+    _note(api)
+    tabs = [{'id': TAB, 'iv': IV, 'ct': CT, 'baseRev': 1}]
+    r = api('post', '/api/vault/rotate', {'vault': vault_body(ct='cm90YXRlZA=='), 'authKey': vault_body()['authKey'],
+                                          'tabs': tabs, 'notes': [], 'drop': ['n_doesnotexi']})
+    assert r.status_code == 409                                              # can only drop what exists
+    assert _rotation(api, [], tabs).status_code == 409                        # missing without being listed
+    r = api('post', '/api/vault/rotate', {'vault': vault_body(ct='cm90YXRlZA=='), 'authKey': vault_body()['authKey'],
+                                          'tabs': tabs, 'notes': [], 'drop': [NOTE]})
+    assert r.get_json() == {'ok': True, 'dropped': 1} and json.loads(read_board(store))['notes'] == []
+
+
+def test_failed_commit_keeps_old_images_and_old_key(api, store, monkeypatch):
+    _tab(api)
+    api('put', f'/api/blobs/{BLOB}', data=os.urandom(64))
+    _note(api, blobs=[BLOB])
+    before = read_board(store)
+
+    def broken_replace(src, dst):
+        raise OSError('disk full')
+    monkeypatch.setattr(st.os, 'replace', broken_replace)
+    tabs = [{'id': TAB, 'iv': IV, 'ct': CT, 'baseRev': 1}]
+    notes = [{'id': NOTE, 'iv': IV, 'ct': CT, 'baseRev': 1, 'blobs': []}]
+    assert _rotation(api, notes, tabs).status_code == 500
+    monkeypatch.undo()
+    assert os.path.exists(store.blob_path(BLOB)) and read_board(store) == before
+    assert api('get', '/api/board').status_code == 200                        # still the old key, in memory too
+    assert not [f for f in os.listdir(store.data_dir) if f.endswith('.tmp')]
+
+
+def test_write_rechecks_the_key_inside_the_lock(app, owner, store):
+    from flask import g
+
+    from sealboard import web
+    with app.test_request_context('/api/tabs/order', method='POST'):
+        g.auth_hash = 'stale-hash-from-before-a-passphrase-change'
+        with pytest.raises(st.Reject) as e:
+            web.update(lambda board: None)
+        assert e.value.status == 401
+

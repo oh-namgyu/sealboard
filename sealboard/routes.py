@@ -63,35 +63,49 @@ def _rotated(items: Any, kind: str) -> dict:
     return out
 
 
-def _swap(current: list, incoming: dict) -> None:
-    """Replace every item's ciphertext — all or nothing: the sets must match and no item may have moved on."""
-    if {c['id'] for c in current} != set(incoming):
-        raise st.Reject(409, 'board changed')
-    for cur in current:
+def _swap(items: list, incoming: dict, drop: frozenset = frozenset()) -> list:
+    """Replace every item's ciphertext — all or nothing: the sets must match exactly and no item may have
+    moved on. ``drop`` = ids the owner's browser could not decrypt (unreadable anyway); they are removed."""
+    kept = [c for c in items if c['id'] not in drop]
+    have = {c['id'] for c in kept}
+    if have != set(incoming) or not drop <= {c['id'] for c in items}:
+        raise st.Reject(409, 'board changed', missing=sorted(have - set(incoming)), extra=sorted(set(incoming) - have))
+    for cur in kept:
         new = incoming[cur['id']]
         if new['baseRev'] != cur['rev']:
             raise st.Reject(409, 'conflict', current=cur)
         cur.update(new['sealed'], rev=cur['rev'] + 1, updatedAt=web.now_iso())
         if new['blobs'] is not None:
             cur['blobs'] = new['blobs']
+    return kept
+
+
+def _drop_ids(value: Any) -> frozenset:
+    if value is None:
+        return frozenset()
+    if not isinstance(value, list):
+        raise st.Reject(400, 'bad drop')
+    return frozenset(st.check_id(v, 'n') for v in value)
 
 
 @web.bp.route('/api/vault/rotate', methods=['POST'])
 def rotate_vault() -> Any:
     """Passphrase change with a brand-new data key. Every tab and note arrives re-encrypted (images were uploaded
-    under new ids beforehand) and is swapped in one atomic save; images under the old key are deleted at once."""
+    under new ids beforehand) and is swapped in one atomic save; images under the old key are deleted at once,
+    after the new board is on disk. Notes the browser could not decrypt are listed in ``drop`` and removed."""
     body = web.body()
     record = web.vault_record(body.get('vault'), body.get('authKey'))
     tabs, notes = _rotated(body.get('tabs'), 'tabs'), _rotated(body.get('notes'), 'notes')
+    drop = _drop_ids(body.get('drop'))
     store = web.store()
 
     def mutate(board: dict) -> None:
-        _swap(board['tabs'], tabs)
-        _swap(board['notes'], notes)
+        board['tabs'] = _swap(board['tabs'], tabs)
+        board['notes'] = _swap(board['notes'], notes, drop)
         board['vault'] = record
         store.sweep_blobs(board, immediate=True)
-    store.update(mutate)
-    return jsonify({'ok': True})
+    web.update(mutate)
+    return jsonify({'ok': True, 'dropped': len(drop)})
 
 
 @web.bp.route('/api/board')
@@ -115,7 +129,7 @@ def order_tabs() -> Any:
         for i, tid in enumerate(ids):
             st.find(board['tabs'], tid)['order'] = i
         board['tabs'].sort(key=lambda t: t['order'])
-    web.store().update(mutate)
+    web.update(mutate)
     return jsonify({'ok': True})
 
 
@@ -134,7 +148,7 @@ def put_tab(tid: str) -> Any:
             board['tabs'].append(cur)
         cur.update(sealed, rev=rev, updatedAt=web.now_iso())
         return rev
-    return jsonify({'ok': True, 'rev': web.store().update(mutate)})
+    return jsonify({'ok': True, 'rev': web.update(mutate)})
 
 
 @web.bp.route('/api/tabs/<tid>', methods=['DELETE'])
@@ -151,7 +165,7 @@ def delete_tab(tid: str) -> Any:
         board['notes'] = [n for n in board['notes'] if n['tab'] != tid]
         store.sweep_blobs(board)
         return before - len(board['notes'])
-    return jsonify({'ok': True, 'deletedNotes': store.update(mutate)})
+    return jsonify({'ok': True, 'deletedNotes': web.update(mutate)})
 
 
 @web.bp.route('/api/notes/<nid>', methods=['PUT'])
@@ -176,7 +190,7 @@ def put_note(nid: str) -> Any:
         if changed:
             store.sweep_blobs(board)
         return rev
-    return jsonify({'ok': True, 'rev': store.update(mutate)})
+    return jsonify({'ok': True, 'rev': web.update(mutate)})
 
 
 @web.bp.route('/api/notes/<nid>', methods=['PATCH'])
@@ -192,7 +206,7 @@ def patch_note(nid: str) -> Any:
         if 'tab' in layout and not st.find(board['tabs'], layout['tab']):
             raise st.Reject(400, 'unknown tab')
         cur.update(layout)
-    web.store().update(mutate)
+    web.update(mutate)
     return jsonify({'ok': True})
 
 
@@ -206,7 +220,7 @@ def delete_note(nid: str) -> Any:
             raise st.Reject(404, 'no note')
         board['notes'] = [n for n in board['notes'] if n['id'] != nid]
         store.sweep_blobs(board)
-    store.update(mutate)
+    web.update(mutate)
     return jsonify({'ok': True})
 
 

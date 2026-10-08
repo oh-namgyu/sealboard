@@ -104,3 +104,16 @@ def test_security_headers_on_page_and_api(client):
 def test_vault_rejects_weak_or_malformed(client, patch):
     assert client.post('/api/vault', json=dict(vault_body(), **patch)).status_code == 400
 
+
+def test_api_responses_are_sandboxed_data(owner):
+    r = owner.get('/api/board', headers=bearer())
+    assert r.headers['Content-Security-Policy'] == "default-src 'none'; sandbox"
+    assert r.headers['Content-Disposition'] == 'attachment'
+
+
+@pytest.mark.parametrize('headers', [{'Sec-Fetch-Mode': 'navigate'}, {'Sec-Fetch-Dest': 'script'},
+                                     {'Sec-Fetch-Dest': 'document'}])
+def test_browsers_may_not_load_the_api_as_a_page_or_script(client, headers):
+    assert client.get('/api/vault', headers=headers).status_code == 400
+    assert client.get('/api/vault', headers={'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Dest': 'empty'}).status_code == 200
+

@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 
 from sealboard import store as st
 from sealboard.auth import FailLimiter, hash_auth_key, key_matches, presented_key
@@ -58,7 +58,20 @@ def _require_owner() -> Any:
     if not key_matches(key, auth_hash):
         limiter().fail(client())
         return jsonify({'error': 'unauthorized'}), 401
+    g.auth_hash = auth_hash
     return None
+
+
+def update(mutate: Callable[[dict], Any]) -> Any:
+    """store().update for owner requests, re-checking inside the write lock that the key this request was
+    authenticated with is still current (a passphrase change may have committed in between)."""
+    seen = g.get('auth_hash')
+
+    def guarded(board: dict) -> Any:
+        if (board.get('vault') or {}).get('authHash') != seen:
+            raise st.Reject(401, 'unauthorized')
+        return mutate(board)
+    return store().update(guarded)
 
 
 @bp.errorhandler(st.Reject)

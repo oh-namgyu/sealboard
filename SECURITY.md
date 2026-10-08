@@ -23,7 +23,14 @@ ciphertext, layout, and a SHA-256 hash of an authentication key.
 | Rollback and reshuffling | A malicious server can serve an older copy of a note, bring back a deleted note, or move a note to another tab (the tab is layout, not encrypted). It cannot forge or read content |
 | Forgotten passphrase | **Unrecoverable by design.** Nobody, including the server operator, can decrypt the notes |
 | Someone who once knew your passphrase | **Yes, from the change on.** Changing the passphrase creates a new data key, re-encrypts every note, tab name and image, and deletes images under the old key. A copy of the data they made *before* the change (e.g. an old backup) stays readable with the old passphrase — nothing can undo a copy already taken |
-| Someone who obtains your auth key (e.g. from a proxy log) | They cannot read notes, but they can modify or delete data until you change the passphrase. Keep backups of the data directory |
+| Someone who obtains your auth key (e.g. from a proxy log) | They cannot read notes, but the auth key is **full control over the stored data**: they can modify or delete it, or run a passphrase change that locks you out. Keep backups of the data directory |
+
+## What a passphrase change does not erase
+
+A passphrase change re-encrypts everything under a new data key and deletes images that were under the old
+one, but copies made earlier stay as they were: backups of the data directory, images in your browser's
+cache, and deleted-but-not-yet-overwritten blocks on disk. Other open windows are signed out by the
+change, and edits they had not saved yet are lost.
 
 ## Hardening notes
 
@@ -39,5 +46,9 @@ ciphertext, layout, and a SHA-256 hash of an authentication key.
 - The browser refuses key-derivation settings weaker than PBKDF2-SHA256 with 600,000 iterations and a
   16-byte salt, so a tampered server cannot downgrade them.
 - Request bodies are capped at 32 MB (a passphrase change sends every note at once); images at 8 MB each.
-- Responses carry a strict Content-Security-Policy (no inline scripts or styles, no framing).
+- Responses carry a strict Content-Security-Policy (no inline scripts or styles, no framing). API responses
+  are additionally sandboxed (`default-src 'none'; sandbox`, `Content-Disposition: attachment`) and the API
+  refuses browser navigations — it only answers `fetch()`.
+- In local client mode the response type of every API call is decided locally (JSON, or bytes for images),
+  the remote's headers are not passed on, and redirects are refused rather than followed.
 - Rich text is filtered through a DOMPurify allowlist; external image URLs are dropped.
