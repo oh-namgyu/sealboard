@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 # dependencies first, so editing the app does not re-download them
-RUN pip install --no-cache-dir "flask>=2.3" "waitress>=3.0.1" \
+RUN pip install --no-cache-dir "flask>=3.1.3" "werkzeug>=3.1.9" "waitress>=3.0.1" \
  && useradd --system --uid 10001 --home /data sealboard \
  && mkdir -p /data && chown sealboard /data
 COPY pyproject.toml README.md LICENSE ./

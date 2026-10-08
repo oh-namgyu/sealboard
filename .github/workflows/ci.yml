@@ -25,6 +25,11 @@ jobs:
         run: pip install -e '.[test]'
       - name: API and CLI tests
         run: python -m pytest -m "not e2e" -q
+      - name: Dependency vulnerability audit
+        if: matrix.python-version == '3.12'
+        run: |
+          pip install pip-audit
+          pip-audit --skip-editable --progress-spinner off
 
   e2e:
     runs-on: ubuntu-latest

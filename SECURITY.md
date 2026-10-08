@@ -32,6 +32,13 @@ one, but copies made earlier stay as they were: backups of the data directory, i
 cache, and deleted-but-not-yet-overwritten blocks on disk. Other open windows are signed out by the
 change, and edits they had not saved yet are lost.
 
+## Review status
+
+sealboard has **not** had an independent human security audit. Its design and code were reviewed by
+independent automated reviewers (crypto/auth, local client mode, key rotation) and every finding was
+fixed with a regression test; CI audits the dependencies for known vulnerabilities on every push.
+Treat it accordingly, and please report anything you find (see above).
+
 ## Hardening notes
 
 - Browsers allow WebCrypto only on `https://` or `localhost`. Expose sealboard to other
