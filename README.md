@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/oh-namgyu/sealboard/actions/workflows/ci.yml/badge.svg)](https://github.com/oh-namgyu/sealboard/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/oh-namgyu/sealboard)](https://github.com/oh-namgyu/sealboard/releases)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
 
 > **한글 요약** — 내 컴퓨터·서버에 직접 띄우는 **스티커 메모판**입니다. 탭별로 메모를 붙이고 끌어서 옮기고 크기를 조절하고 접을 수 있고, 일반 글·서식 글·캡처 이미지(붙여넣기·끌어놓기·화면 캡처)를 넣을 수 있습니다. 탭 이름·메모·이미지는 **브라우저 안에서만** 암호화·복호화되고 서버에는 암호문만 남아서, 서버 관리자나 데이터 파일을 가져간 사람도 내용을 읽을 수 없습니다. 로그인도 패스프레이즈에서 파생한 키로 하므로 서버는 패스프레이즈를 받지 않고, 패스프레이즈를 바꾸면 **새 데이터 키로 전부 다시 암호화**합니다. 원격 서버를 쓸 때는 `--remote` **로컬 클라이언트 모드**로 페이지 코드를 내 PC 에서 띄워, 서버가 탈취돼도 코드를 바꿔치기할 수 없게 합니다. 대신 **패스프레이즈를 잊으면 누구도 복구할 수 없습니다.** `pip install` 또는 Docker 로 실행합니다.
