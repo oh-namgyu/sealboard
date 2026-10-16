@@ -41,7 +41,7 @@ jobs:
           cache: pip
       - name: Install
         run: pip install -e '.[e2e]'
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
